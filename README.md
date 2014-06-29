@@ -8,7 +8,7 @@ This is mostly a simple wrapper around the [poly2tri](https://code.google.com/p/
 To Compile
 ----------
 
-    g++ -g sweep/advancing_front.cc sweep/cdt.cc sweep/sweep.cc sweep/sweep_context.cc common/shapes.cc weakpwh.cpp -o weakpwh
+    g++ -g clipper.cpp sweep/advancing_front.cc sweep/cdt.cc sweep/sweep.cc sweep/sweep_context.cc common/shapes.cc weakpwh.cpp -o weakpwh
 
 
 Sample Usage
