@@ -14,7 +14,7 @@ To Compile
 Sample Usage
 -------------
 
-    cat testdata/test4.gp | ./weakpwh
+    cat testdata/test4.gp | ./weakpwh -i -
 
 
 Input Format
