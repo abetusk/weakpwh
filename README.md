@@ -23,6 +23,15 @@ Sample Usage
 
     cat testdata/test4.gp | ./weakpwh -i -
 
+Example output
+--------------
+
+    ./weakpwh -i testdata/realworld.gp -o singlecontour.gp ; echo " plot 'singlecontour.gp' with l " | gnuplot -p
+
+
+![alt tag](misc/singlecontour.png)
+
+
 
 Input Format
 ------------
