@@ -108,6 +108,20 @@ typedef std::map< iEdge, int, iEdge_cmp > EdgeMap;
 
 //---
 
+class SimplePolyTreeNode {
+  public:
+    int boundaryIndex;
+    std::vector<int> holeIndex;
+} ;
+
+class SimplePolyTree {
+  public:
+    std::vector<SimplePolyTreeNode> node;
+    std::vector<SimplePolyTree *>children;
+} ;
+
+//---
+
 bool consistency_check( std::vector< std::vector<iPnt> > &pwh, PointAdjacency &edge, PointInfoMap &pointInfo) {
   int i, j, k;
   iPnt xy;
@@ -201,6 +215,8 @@ void addEdgesFromTri( PointAdjacency &edge, p2t::Triangle *tri, EdgeMap &edgeMap
     uv.v[1].X = dtocint( tri->GetPoint(b)->x );
     uv.v[1].Y = dtocint( tri->GetPoint(b)->y );
 
+    //DEBUG
+    //printf("%lli %lli\n%lli %lli\n\n", uv.v[0].X, uv.v[0].Y, uv.v[1].X, uv.v[1].Y ); 
 
     if ( edgeMap.find( uv ) != edgeMap.end() ) { continue; }
 
@@ -468,102 +484,118 @@ void process_command_line_options( int argc, char **argv )
 
 }
 
-int main(int argc, char **argv) {
+void print_poly_nodes( ClipperLib::PolyNode *node, int depth )
+{
   int i, j, k;
-  long long int X, Y;
-  int line_no=-1;
-  bool first = true;
-  bool is_outer_boundary = true;
+
+  printf("# [%i] isHole %i\n", depth, node->IsHole() ? 1 : 0 );
+  for (i=0; i<node->Contour.size(); i++) {
+    printf("%lli %lli\n", node->Contour[i].X, node->Contour[i].Y );
+  }
+  printf("\n");
+
+  for (i=0; i<node->Childs.size(); i++) {
+    print_poly_nodes( node->Childs[i], depth+1 );
+  }
+
+}
+
+int constructPolygonsWithHoles( ClipperLib::PolyNode *node,
+                                std::vector< std::vector< std::vector< iPnt > > > &pwhs,
+                                int cur_pwh_ind,
+                                int next_ind )
+{
+  int i, j, k, n, ind;
+  std::vector< iPnt > path;
+  std::vector< std::vector< iPnt > > pwh;
+
+  for (i=0; i<node->Contour.size(); i++) {
+    path.push_back( iPnt( node->Contour[i].X, node->Contour[i].Y ) );
+  }
+
+  ind = cur_pwh_ind;
+
+  if (!node->IsHole()) {
+    ind = next_ind;
+    next_ind++;
+    pwhs.push_back( pwh );
+  }
+
+  pwhs[ ind ].push_back( path );
+
+  for (i=0; i<node->Childs.size(); i++) {
+    next_ind = constructPolygonsWithHoles( node->Childs[i], pwhs, ind, next_ind );
+  }
+
+  return next_ind;
+
+}
+
+
+int clip_polygon_is_A_simply_inside_B( ClipperLib::Path &A, ClipperLib::Path &B )
+{
+  ClipperLib::Clipper clipAmB, clipBmA;
+  ClipperLib::Paths solnAmB, solnBmA;
+
+  ClipperLib::Path x, y;
+
+  x = A;
+  y = B;
+
+  //printf(" Area(A) %f, Area(B) %f\n", ClipperLib::Area( x ), ClipperLib::Area( y ) );
+
+  if ( ClipperLib::Area( x ) < 0 ) { ClipperLib::ReversePath( x ); }
+  if ( ClipperLib::Area( y ) < 0 ) { ClipperLib::ReversePath( y ); }
+
+  //printf(" Area(A) %f, Area(B) %f\n", ClipperLib::Area( x ), ClipperLib::Area( y ) );
+
+
+  clipAmB.AddPath( x, ClipperLib::ptSubject, true );
+  clipAmB.AddPath( y, ClipperLib::ptClip, true );
+
+  clipAmB.Execute( ClipperLib::ctDifference,
+                   solnAmB,
+                   ClipperLib::pftNonZero,
+                   ClipperLib::pftNonZero  );
+
+  clipBmA.AddPath( y, ClipperLib::ptSubject, true );
+  clipBmA.AddPath( x, ClipperLib::ptClip, true );
+
+  clipBmA.Execute( ClipperLib::ctDifference,
+                   solnBmA,
+                   ClipperLib::pftNonZero,
+                   ClipperLib::pftNonZero  );
+
+  //printf( " AmB %i, BmA %i\n", (int)solnAmB.size(), (int)solnBmA.size() );
+
+  if ( (solnAmB.size() == 0) && (solnBmA.size() > 0) )
+    return 1;
+  return 0;
+
+}
+
+
+void emitWeakPWH( std::vector< std::vector< iPnt > > pwh ) {
+  int i, j, k;
+  int polyname = 0;
+  int line_no=0;
+  iPnt xy;
+  PointInfoMap pointInfoMap;
+  EdgeMap edgeMap;
+  std::map< int, bool > path_visited_map;
+
+  PointAdjacency edge;
+  PointInfo pi;
+  iEdge uv;
+  std::vector< iPnt > ipoly;
 
   std::vector<p2t::Point *> outer_boundary;
   std::vector< std::vector<p2t::Point *> > holes;
   std::vector<p2t::Point *> poly;
 
   std::vector<p2t::Point *> garbage_poly;
-  int polyname = 0;
 
-  PointInfoMap pointInfoMap;
-  EdgeMap edgeMap;
-  std::map< int, bool > path_visited_map;
 
-  PointAdjacency edge;
-
-  std::vector< std::vector<iPnt> > pwh;
-
-  iPnt xy;
-  PointInfo pi;
-
-  iEdge uv;
-
-  std::vector< iPnt > ipoly;
-
-  char buf[1024];
-
-  ClipperLib::Path cur_clip_path;
-  ClipperLib::Paths clip_paths;
-  ClipperLib::Paths clip_paths_res;
-
-  process_command_line_options( argc, argv );
-
-  //while (fgets(buf, 1024, stdin)) {
-  while (fgets(buf, 1024, gInputFp)) {
-    line_no++;
-
-    if (buf[0] == '#') continue;
-    if (buf[0] == '\n') {
-
-      if (cur_clip_path.size() == 0) { continue; }
-
-      poly.clear();
-      ipoly.clear();
-
-      clip_paths.clear();
-      clip_paths_res.clear();
-      clip_paths.push_back( cur_clip_path );
-
-      ClipperLib::SimplifyPolygons( clip_paths, clip_paths_res, ClipperLib::pftNonZero );
-
-      if (clip_paths_res.size() == 0)
-      {
-        fprintf(stderr, "Resulting polygon invalid (colinear?).  line_no %i\n", line_no);
-        exit(2);
-      }
-
-      for (i=0; i<clip_paths_res[0].size(); i++) {
-        xy.X = clip_paths_res[0][i].X;
-        xy.Y = clip_paths_res[0][i].Y;
-        poly.push_back( new p2t::Point( xy.X, xy.Y ) );
-
-        garbage_poly.push_back( poly[ poly.size()-1 ] );
-
-        ipoly.push_back( xy );
-      }
-
-      cur_clip_path.clear();
-
-      if (polyname==0) {
-        outer_boundary = poly;
-        pwh.push_back(ipoly);
-      } else {
-        holes.push_back( poly );
-        pwh.push_back(ipoly);
-      }
-
-      path_visited_map[polyname] = false;
-
-      polyname ++;
-      is_outer_boundary = false;
-      continue;
-    }
-
-    k = sscanf(buf, "%lli %lli", &X, &Y);
-    if (k!=2) { fprintf(stderr, "invalid read on line %i, exiting\n", line_no); exit(2); }
-
-    cur_clip_path.push_back( ClipperLib::IntPoint(X, Y) );
-
-  }
-
-  polyname = 0;
   for (i=0; i<pwh.size(); i++) {
     for (j=0; j<pwh[i].size(); j++) {
 
@@ -585,6 +617,222 @@ int main(int argc, char **argv) {
     }
   }
 
+  for (i=0; i<pwh[0].size(); i++) {
+    outer_boundary.push_back( new p2t::Point( pwh[0][i].X, pwh[0][i].Y ) );
+    garbage_poly.push_back( outer_boundary[ outer_boundary.size()-1 ] );
+  }
+
+  for (i=1; i<pwh.size(); i++) {
+    poly.clear();
+    for (j=0; j<pwh[i].size(); j++) {
+      poly.push_back( new p2t::Point( pwh[i][j].X, pwh[i][j].Y ) );
+      garbage_poly.push_back( poly[ poly.size()-1 ] );
+    }
+    holes.push_back(poly);
+  }
+
+  if (outer_boundary.size() < 3) {
+    fprintf(stderr, "invalid number of points for outer boundary (%lu), exiting\n", outer_boundary.size()); exit(2); 
+  }
+
+  for (i=0; i<holes.size(); i++) {
+    if (holes[i].size() < 3) {
+      fprintf(stderr ,"hole %i has less than 3 points (%lu), exiting\n", i, holes[i].size() );
+      exit(2);
+    }
+  }
+
+
+
+  p2t::CDT *cdt = new p2t::CDT(outer_boundary);
+  for (i=0; i<holes.size(); i++ ) {
+    cdt->AddHole(holes[i]);
+  }
+
+  cdt->Triangulate();
+
+  std::vector< p2t::Triangle * > tris = cdt->GetTriangles();
+
+  for (i=0; i<tris.size(); i++) {
+    p2t::Triangle * tri = tris[i];
+    addEdgesFromTri( edge, tri, edgeMap );
+  }
+
+  if (!consistency_check( pwh, edge, pointInfoMap)) {
+  } else { }
+
+
+  Path opath;
+
+  ConvertPolygonWithHolesToWeakPath( opath, pwh, edge, pointInfoMap );
+
+  int n = opath.size();
+  for (i=0; i<n; i++) { fprintf(gOutputFp, "%lli %lli\n", opath[i].X, opath[i].Y ); }
+
+  if (gOutputFp != stdout) {
+    fclose(gOutputFp);
+  }
+
+  delete cdt;
+  for (i=0; i<garbage_poly.size(); i++)
+    delete garbage_poly[i];
+
+}
+
+
+
+int main(int argc, char **argv) {
+  int i, j, k;
+  long long int X, Y;
+  int line_no=-1;
+  bool first = true;
+  bool is_outer_boundary = true;
+
+  std::vector<p2t::Point *> outer_boundary;
+  std::vector< std::vector<p2t::Point *> > boundaries;
+  std::vector< std::vector<p2t::Point *> > holes;
+  std::vector<p2t::Point *> poly;
+
+  int polyname = 0;
+
+  PointInfoMap pointInfoMap;
+  EdgeMap edgeMap;
+  std::map< int, bool > path_visited_map;
+
+  PointAdjacency edge;
+
+  std::vector< std::vector<iPnt> > pwh;
+
+  iPnt xy;
+  PointInfo pi;
+
+  iEdge uv;
+
+  std::vector< iPnt > ipoly;
+
+  int debug_var = 0;
+
+  char buf[1024];
+
+  ClipperLib::Path cur_clip_path;
+  ClipperLib::Paths clip_paths;
+  ClipperLib::Paths clip_paths_res;
+
+  std::vector<ClipperLib::Path> clip_boundaries;
+  std::vector<ClipperLib::Path> clip_holes;
+
+  process_command_line_options( argc, argv );
+
+  while (fgets(buf, 1024, gInputFp)) {
+    line_no++;
+
+    if (buf[0] == '#') continue;
+    if (buf[0] == '\n') {
+
+      if (cur_clip_path.size() == 0) { continue; }
+
+      poly.clear();
+      ipoly.clear();
+
+      clip_paths.clear();
+      clip_paths_res.clear();
+
+      clip_paths.push_back( cur_clip_path );
+
+      ClipperLib::SimplifyPolygons( clip_paths, clip_paths_res, ClipperLib::pftNonZero );
+
+      if (clip_paths_res.size() == 0)
+      {
+        fprintf(stderr, "Resulting polygon invalid (colinear?).  line_no %i\n", line_no);
+        exit(2);
+      }
+
+      for (i=0; i<clip_paths_res[0].size(); i++) {
+        xy.X = clip_paths_res[0][i].X;
+        xy.Y = clip_paths_res[0][i].Y;
+        poly.push_back( new p2t::Point( xy.X, xy.Y ) );
+
+        ipoly.push_back( xy );
+      }
+
+      if (ClipperLib::Area( cur_clip_path ) < 0.0) {
+        boundaries.push_back( poly );
+        clip_boundaries.push_back( cur_clip_path );
+      } else {
+        holes.push_back( poly );
+        clip_holes.push_back( cur_clip_path );
+      }
+      pwh.push_back(ipoly);
+
+      cur_clip_path.clear();
+
+      path_visited_map[polyname] = false;
+
+      polyname ++;
+      is_outer_boundary = false;
+      continue;
+    }
+
+    k = sscanf(buf, "%lli %lli", &X, &Y);
+    if (k!=2) { fprintf(stderr, "invalid read on line %i, exiting\n", line_no); exit(2); }
+
+    cur_clip_path.push_back( ClipperLib::IntPoint(X, Y) );
+
+  }
+
+  // Construct a PolyTree that has the heirarchy of polygons with holes
+  //
+  ClipperLib::PolyTree pt;
+  ClipperLib::Clipper clip;
+
+  for (i=0; i<clip_boundaries.size(); i++) {
+    clip.AddPath( clip_boundaries[i], ClipperLib::ptSubject, true );
+  }
+
+  for (i=0; i<clip_holes.size(); i++) {
+    clip.AddPath( clip_holes[i], ClipperLib::ptSubject, true );
+  }
+
+  clip.Execute( ClipperLib::ctUnion,
+                pt,
+                ClipperLib::pftNonZero,
+                ClipperLib::pftNonZero );
+
+  std::vector< std::vector< std::vector< iPnt > > > pwhs;
+  std::vector< std::vector< iPnt > > dummy_pwh;
+
+  constructPolygonsWithHoles( pt.AllNodes[0], pwhs, -1, 0 );
+
+  for (i=0; i<pwhs.size(); i++) {
+    printf("# CPWH %i\n", i);
+    emitWeakPWH( pwhs[i] );
+    printf("\n");
+  }
+
+  //exit(0);
+
+  /*
+  polyname = 0;
+  for (i=0; i<pwh.size(); i++) {
+    for (j=0; j<pwh[i].size(); j++) {
+
+      xy.X = pwh[i][j].X;
+      xy.Y = pwh[i][j].Y;
+
+      pi.pointInd = j;
+      pi.polygonInd = i;
+      pi.is_outer_boundary = ((i==0) ? true : false );
+      pi.is_clockwise = ((i==0) ? true : false );
+      pi.dir = ((i==0) ? 1 : 1 );
+
+      if ( pointInfoMap.find( xy ) != pointInfoMap.end() ) {
+        fprintf(stderr, "DUPLICATE POINT FOUND! line %i, exiting\n", line_no); exit(2);
+      }
+
+      pointInfoMap[xy] = pi;
+
+    }
+  }
 
   if (outer_boundary.size() < 3) {
     fprintf(stderr, "invalid number of points for outer boundary (%lu), exiting\n", outer_boundary.size()); exit(2); 
@@ -627,7 +875,6 @@ int main(int argc, char **argv) {
   }
 
   delete cdt;
-  for (i=0; i<garbage_poly.size(); i++) 
-    delete garbage_poly[i];
+  */
 
 }

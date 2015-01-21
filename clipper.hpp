@@ -165,8 +165,8 @@ public:
     PolyNode* GetFirst() const;
     void Clear();
     int Total() const;
-private:
     PolyNodes AllNodes;
+private:
     friend class Clipper; //to access AllNodes
 };
 
