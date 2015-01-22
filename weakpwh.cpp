@@ -669,10 +669,6 @@ void emitWeakPWH( std::vector< std::vector< iPnt > > pwh ) {
   int n = opath.size();
   for (i=0; i<n; i++) { fprintf(gOutputFp, "%lli %lli\n", opath[i].X, opath[i].Y ); }
 
-  if (gOutputFp != stdout) {
-    fclose(gOutputFp);
-  }
-
   delete cdt;
   for (i=0; i<garbage_poly.size(); i++)
     delete garbage_poly[i];
@@ -804,10 +800,16 @@ int main(int argc, char **argv) {
   constructPolygonsWithHoles( pt.AllNodes[0], pwhs, -1, 0 );
 
   for (i=0; i<pwhs.size(); i++) {
-    printf("# CPWH %i\n", i);
+    fprintf( gOutputFp, "# CPWH %i\n", i);
     emitWeakPWH( pwhs[i] );
-    printf("\n");
+    fprintf( gOutputFp, "\n" );
   }
+
+  if (gOutputFp != stdout) {
+    fclose(gOutputFp);
+  }
+
+
 
   //exit(0);
 
