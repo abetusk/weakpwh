@@ -50,8 +50,13 @@
 
 bool gDebugFlag = false;
 
+long long gMulFactor = 1000;
+
 typedef signed long long cInt;
 typedef unsigned long long cUInt;
+
+
+
 
 cInt dtocint( double d ) {
   if (d < 0.0) return (unsigned long long)(d-0.5);
@@ -171,7 +176,6 @@ bool consistency_check( std::vector< std::vector<iPnt> > &pwh, PointAdjacency &e
     for (j=0; j<pwh[i].size(); j++) {
       xy.X = pwh[i][j].X;
       xy.Y = pwh[i][j].Y;
-
       pi = pointInfo[xy];
     }
   }
@@ -214,9 +218,6 @@ void addEdgesFromTri( PointAdjacency &edge, p2t::Triangle *tri, EdgeMap &edgeMap
     uv.v[0].Y = dtocint( tri->GetPoint(a)->y );
     uv.v[1].X = dtocint( tri->GetPoint(b)->x );
     uv.v[1].Y = dtocint( tri->GetPoint(b)->y );
-
-    //DEBUG
-    //printf("%lli %lli\n%lli %lli\n\n", uv.v[0].X, uv.v[0].Y, uv.v[1].X, uv.v[1].Y ); 
 
     if ( edgeMap.find( uv ) != edgeMap.end() ) { continue; }
 
@@ -643,7 +644,6 @@ void emitWeakPWH( std::vector< std::vector< iPnt > > pwh ) {
   }
 
 
-
   p2t::CDT *cdt = new p2t::CDT(outer_boundary);
   for (i=0; i<holes.size(); i++ ) {
     cdt->AddHole(holes[i]);
@@ -667,7 +667,7 @@ void emitWeakPWH( std::vector< std::vector< iPnt > > pwh ) {
   ConvertPolygonWithHolesToWeakPath( opath, pwh, edge, pointInfoMap );
 
   int n = opath.size();
-  for (i=0; i<n; i++) { fprintf(gOutputFp, "%lli %lli\n", opath[i].X, opath[i].Y ); }
+  for (i=0; i<n; i++) { fprintf(gOutputFp, "%lli %lli\n", opath[i].X/gMulFactor, opath[i].Y/gMulFactor ); }
 
   delete cdt;
   for (i=0; i<garbage_poly.size(); i++)
@@ -716,6 +716,8 @@ int main(int argc, char **argv) {
 
   std::vector<ClipperLib::Path> clip_boundaries;
   std::vector<ClipperLib::Path> clip_holes;
+
+  ClipperLib::Path tpath;
 
   process_command_line_options( argc, argv );
 
@@ -772,7 +774,7 @@ int main(int argc, char **argv) {
     k = sscanf(buf, "%lli %lli", &X, &Y);
     if (k!=2) { fprintf(stderr, "invalid read on line %i, exiting\n", line_no); exit(2); }
 
-    cur_clip_path.push_back( ClipperLib::IntPoint(X, Y) );
+    cur_clip_path.push_back( ClipperLib::IntPoint(X*gMulFactor, Y*gMulFactor) );
 
   }
 
@@ -782,17 +784,59 @@ int main(int argc, char **argv) {
   ClipperLib::Clipper clip;
 
   for (i=0; i<clip_boundaries.size(); i++) {
-    clip.AddPath( clip_boundaries[i], ClipperLib::ptSubject, true );
+
+    // If we have non-trivial boundaries/holes, we need
+    // to separate them out.  For example
+    //
+    //  ---
+    //  | |
+    //  ---
+    //    |
+    //  ---
+    //  | |
+    //  ---
+    //
+    ClipperLib::Paths   dirty_polys, clean_polys;
+    ClipperLib::Path    clean_poly;
+    ClipperLib::Clipper clean_clip;
+
+    dirty_polys.push_back( clip_boundaries[i] );
+    clean_clip.AddPaths( dirty_polys, ClipperLib::ptSubject, true );
+    clean_clip.Execute( ClipperLib::ctUnion, clean_polys, ClipperLib::pftNegative, ClipperLib::pftNegative );
+
+    for (j=0; j<clean_polys.size(); j++) {
+      clip.AddPath( clean_polys[j], ClipperLib::ptSubject, true );
+    }
+
   }
 
   for (i=0; i<clip_holes.size(); i++) {
-    clip.AddPath( clip_holes[i], ClipperLib::ptSubject, true );
+
+    // Do the same as above with the boundaries as with holes.
+    //
+    ClipperLib::Paths   dirty_polys, clean_polys;
+    ClipperLib::Path    clean_poly;
+    ClipperLib::Clipper clean_clip;
+
+    ClipperLib::ReversePath( clip_holes[i] );
+    dirty_polys.push_back( clip_holes[i] );
+    clean_clip.AddPaths( dirty_polys, ClipperLib::ptSubject, true );
+    clean_clip.Execute( ClipperLib::ctUnion, clean_polys, ClipperLib::pftNegative, ClipperLib::pftNegative );
+
+    for (j=0; j<clean_polys.size(); j++) {
+      ClipperLib::ReversePath( clean_polys[j] );
+      clip.AddPath( clean_polys[j], ClipperLib::ptSubject, true );
+    }
   }
 
+
+  // Now do the big operation..
+  //
   clip.Execute( ClipperLib::ctUnion,
                 pt,
                 ClipperLib::pftNonZero,
                 ClipperLib::pftNonZero );
+
 
   std::vector< std::vector< std::vector< iPnt > > > pwhs;
   std::vector< std::vector< iPnt > > dummy_pwh;
@@ -808,75 +852,5 @@ int main(int argc, char **argv) {
   if (gOutputFp != stdout) {
     fclose(gOutputFp);
   }
-
-
-
-  //exit(0);
-
-  /*
-  polyname = 0;
-  for (i=0; i<pwh.size(); i++) {
-    for (j=0; j<pwh[i].size(); j++) {
-
-      xy.X = pwh[i][j].X;
-      xy.Y = pwh[i][j].Y;
-
-      pi.pointInd = j;
-      pi.polygonInd = i;
-      pi.is_outer_boundary = ((i==0) ? true : false );
-      pi.is_clockwise = ((i==0) ? true : false );
-      pi.dir = ((i==0) ? 1 : 1 );
-
-      if ( pointInfoMap.find( xy ) != pointInfoMap.end() ) {
-        fprintf(stderr, "DUPLICATE POINT FOUND! line %i, exiting\n", line_no); exit(2);
-      }
-
-      pointInfoMap[xy] = pi;
-
-    }
-  }
-
-  if (outer_boundary.size() < 3) {
-    fprintf(stderr, "invalid number of points for outer boundary (%lu), exiting\n", outer_boundary.size()); exit(2); 
-  }
-
-  for (i=0; i<holes.size(); i++) {
-    if (holes[i].size() < 3) {
-      fprintf(stderr ,"hole %i has less than 3 points (%lu), exiting\n", i, holes[i].size() );
-      exit(2);
-    }
-  }
-
-  p2t::CDT *cdt = new p2t::CDT(outer_boundary);
-  for (i=0; i<holes.size(); i++ ) {
-    cdt->AddHole(holes[i]);
-  }
-
-  cdt->Triangulate();
-
-  std::vector< p2t::Triangle * > tris = cdt->GetTriangles();
-
-  for (i=0; i<tris.size(); i++) {
-    p2t::Triangle * tri = tris[i];
-    addEdgesFromTri( edge, tri, edgeMap );
-  }
-
-  if (!consistency_check( pwh, edge, pointInfoMap)) {
-  } else { }
-
-
-  Path opath;
-
-  ConvertPolygonWithHolesToWeakPath( opath, pwh, edge, pointInfoMap );
-
-  int n = opath.size();
-  for (i=0; i<n; i++) { fprintf(gOutputFp, "%lli %lli\n", opath[i].X, opath[i].Y ); }
-
-  if (gOutputFp != stdout) {
-    fclose(gOutputFp);
-  }
-
-  delete cdt;
-  */
 
 }
