@@ -46,16 +46,20 @@
 #include "poly2tri.h"
 #include "clipper.hpp"
 
-#define WEAKPWH_VER "0.1"
+#define WEAKPWH_VER "0.2.0"
 
 bool gDebugFlag = false;
 
 long long gMulFactor = 1000;
 
+double gPremul = 1000000000.0;
+
 typedef signed long long cInt;
 typedef unsigned long long cUInt;
 
 
+int gFloatRead = 0;
+int gIgnoreColinear = 1;
 
 
 cInt dtocint( double d ) {
@@ -138,7 +142,7 @@ bool consistency_check( std::vector< std::vector<iPnt> > &pwh, PointAdjacency &e
       xy.Y = pwh[i][j].Y;
 
       if ( pointInfo.find(xy) == pointInfo.end() ) {
-        printf("ERROR: point (%lli,%lli) in pwh[%i][%i] but not found in pointInfo\n",
+        fprintf(stderr, "ERROR: point (%lli,%lli) in pwh[%i][%i] but not found in pointInfo\n",
             xy.X, xy.Y, i, j);
         exit(2);
       }
@@ -146,25 +150,25 @@ bool consistency_check( std::vector< std::vector<iPnt> > &pwh, PointAdjacency &e
       pi = pointInfo[xy];
 
       if (pi.polygonInd != i ) {
-        printf("ERROR: point (%lli,%lli) in pwh[%i][%i] does not match polygonInd (%i)\n",
+        fprintf(stderr, "ERROR: point (%lli,%lli) in pwh[%i][%i] does not match polygonInd (%i)\n",
             xy.X, xy.Y, i, j, pi.polygonInd);
         exit(2);
       }
 
       if (pi.pointInd != j ) {
-        printf("ERROR: point (%lli,%lli) in pwh[%i][%i] does not match pointInd (%i)\n",
+        fprintf(stderr, "ERROR: point (%lli,%lli) in pwh[%i][%i] does not match pointInd (%i)\n",
             xy.X, xy.Y, i, j, pi.pointInd);
         exit(2);
       }
 
       if ((i==0) && (!pi.is_outer_boundary)) {
-        printf("ERROR: point (%lli,%lli) in pwh[%i][%i] should be boundary but isn't\n",
+        fprintf(stderr, "ERROR: point (%lli,%lli) in pwh[%i][%i] should be boundary but isn't\n",
             xy.X, xy.Y, i, j );
         exit(2);
       }
 
       if ((i!=0) && (pi.is_outer_boundary)) {
-        printf("ERROR: point (%lli,%lli) in pwh[%i][%i] should be not boundary but is\n",
+        fprintf(stderr, "ERROR: point (%lli,%lli) in pwh[%i][%i] should be not boundary but is\n",
             xy.X, xy.Y, i, j );
         exit(2);
       }
@@ -186,7 +190,7 @@ bool consistency_check( std::vector< std::vector<iPnt> > &pwh, PointAdjacency &e
     std::vector< iPnt > v = e_it->second;
 
     if ( pointInfo.find(xy) == pointInfo.end() ) {
-      printf("ERROR: adjacency lookup fail: (%lli,%lli) not found in PointInfoMap\n",
+      fprintf(stderr, "ERROR: adjacency lookup fail: (%lli,%lli) not found in PointInfoMap\n",
           xy.X, xy.Y);
       exit(2);
     }
@@ -194,7 +198,7 @@ bool consistency_check( std::vector< std::vector<iPnt> > &pwh, PointAdjacency &e
     for (i=0; i<v.size(); i++) {
 
       if ( pointInfo.find(v[i]) == pointInfo.end() ) {
-        printf("ERROR: adjacency lookup fail: edge (%lli,%lli)->(%lli,%lli) [%i] not found in PointInfoMap\n",
+        fprintf(stderr, "ERROR: adjacency lookup fail: edge (%lli,%lli)->(%lli,%lli) [%i] not found in PointInfoMap\n",
             xy.X, xy.Y, v[i].X, v[i].Y, i);
         exit(2);
       }
@@ -302,11 +306,11 @@ void ConvertPWHToWeakPath_r( Path &outPath,
 
 // Go through each vertex of each polygon.  If the polygon has already
 // been visited, skip over it.  If the 
+//
 int ConvertPolygonWithHolesToWeakPath( Path &outPath, 
                                        Paths &paths, 
                                        PointAdjacency &edge, 
-                                       PointInfoMap &pointInfoMap )
-{
+                                       PointInfoMap &pointInfoMap ) {
 
   int i, j, k, n, m, n_nei;
   iPnt u, v, w;
@@ -375,6 +379,8 @@ struct option gLongOption[] =
 {
   {"input", required_argument,0,'i'},
   {"output", required_argument,0,'o'},
+  {"premul", required_argument,0,'F'},
+  {"version", no_argument, 0, 'V'},
   {"verbose", no_argument, 0, 'v'},
   {"help", no_argument, 0, 'h'},
   {0,0,0,0}
@@ -384,37 +390,50 @@ char gOptionDescription[][1024] =
 {
   "input",
   "output",
+  "premul",
+  "version",
   "verbose",
   "help",
   "n/a"
 };
 
-void show_help(void) 
-{
+void show_version(FILE *fp) {
+  fprintf(fp, "version %s\n", WEAKPWH_VER);
+}
+
+void show_help(FILE *fp) {
   int i, j, k;
   int len;
 
-  printf("Convert a polygon with holes to a weakly simple polygon\n");
-  printf("version %s\n", WEAKPWH_VER);
 
-  for (i=0; gLongOption[i].name; i++)
-  {
+  fprintf(fp, "\n");
+  fprintf(fp, "Convert a polygon with holes to a weakly simple polygon\n");
+  show_version(fp);
+  fprintf(fp, "\n");
+
+  fprintf(fp, "usage:\n");
+  fprintf(fp, "\n");
+  fprintf(fp, "  weakpwh [-i inputfile] [-h] [-v] [-V] [-o outfile] [inputfile]\n");
+  fprintf(fp, "\n");
+
+  for (i=0; gLongOption[i].name; i++) {
     len = strlen(gLongOption[i].name);
 
-    printf("  -%c, --%s", gLongOption[i].val, gLongOption[i].name);
-    if (gLongOption[i].has_arg)
-    {
-      printf(" %s", gLongOption[i].name);
+    fprintf(fp, "  -%c, --%s", gLongOption[i].val, gLongOption[i].name);
+    if (gLongOption[i].has_arg) {
+      fprintf(fp, " %s", gLongOption[i].name);
       len = 2*len + 3;
     }
-    else
-    {
+    else {
       len = len + 2;
     }
-    for (j=0; j<(32-len); j++) printf(" ");
+    for (j=0; j<(32-len); j++) {
+      fprintf(fp, " ");
+    }
 
-    printf("%s\n", gOptionDescription[i]);
+    fprintf(fp, "%s\n", gOptionDescription[i]);
   }
+  fprintf(fp, "\n");
 
 }
 
@@ -425,18 +444,24 @@ char *gOutputFilename = NULL;
 FILE *gInputFp = NULL;
 FILE *gOutputFp = NULL;
 
-void process_command_line_options( int argc, char **argv )
-{
+void process_command_line_options( int argc, char **argv ) {
   extern char *optarg;
   extern int optind;
   int option_index;
 
   char ch;
 
-  while ((ch = getopt_long(argc, argv, "hi:o:v", gLongOption, &option_index)) > 0) switch(ch) 
-  {
+  while ((ch = getopt_long(argc, argv, "hi:o:vVF:", gLongOption, &option_index)) > 0) switch(ch) {
     case 'h':
-      show_help();
+      show_help(stdout);
+      exit(0);
+      break;
+    case 'F':
+      gPremul = strtod(optarg, NULL);
+      gFloatRead = 1;
+      break;
+    case 'V':
+      show_version(stdout);
       exit(0);
       break;
     case 'v':
@@ -453,13 +478,16 @@ void process_command_line_options( int argc, char **argv )
       fprintf(stderr, "bad option\n");
       exit(2);
       break;
-
   }
 
   if (!gInputFilename) {
-    fprintf(stderr, "provide input file\n");
-    show_help();
-    exit(2);
+    if (optind < argc) {
+      gInputFilename = strdup(argv[optind]);
+    } else {
+      fprintf(stderr, "provide input file\n");
+      show_help(stderr);
+      exit(2);
+    }
   }
 
   if (gInputFilename[0] == '-') {
@@ -471,6 +499,7 @@ void process_command_line_options( int argc, char **argv )
       exit(errno);
     }
   }
+  free(gInputFilename);
 
 
   if ((!gOutputFilename) || (gOutputFilename[0] == '-')) {
@@ -485,8 +514,7 @@ void process_command_line_options( int argc, char **argv )
 
 }
 
-void print_poly_nodes( ClipperLib::PolyNode *node, int depth )
-{
+void print_poly_nodes( ClipperLib::PolyNode *node, int depth ) {
   int i, j, k;
 
   printf("# [%i] isHole %i\n", depth, node->IsHole() ? 1 : 0 );
@@ -504,8 +532,7 @@ void print_poly_nodes( ClipperLib::PolyNode *node, int depth )
 int constructPolygonsWithHoles( ClipperLib::PolyNode *node,
                                 std::vector< std::vector< std::vector< iPnt > > > &pwhs,
                                 int cur_pwh_ind,
-                                int next_ind )
-{
+                                int next_ind ) {
   int i, j, k, n, ind;
   std::vector< iPnt > path;
   std::vector< std::vector< iPnt > > pwh;
@@ -533,8 +560,7 @@ int constructPolygonsWithHoles( ClipperLib::PolyNode *node,
 }
 
 
-int clip_polygon_is_A_simply_inside_B( ClipperLib::Path &A, ClipperLib::Path &B )
-{
+int clip_polygon_is_A_simply_inside_B( ClipperLib::Path &A, ClipperLib::Path &B ) {
   ClipperLib::Clipper clipAmB, clipBmA;
   ClipperLib::Paths solnAmB, solnBmA;
 
@@ -543,13 +569,8 @@ int clip_polygon_is_A_simply_inside_B( ClipperLib::Path &A, ClipperLib::Path &B 
   x = A;
   y = B;
 
-  //printf(" Area(A) %f, Area(B) %f\n", ClipperLib::Area( x ), ClipperLib::Area( y ) );
-
   if ( ClipperLib::Area( x ) < 0 ) { ClipperLib::ReversePath( x ); }
   if ( ClipperLib::Area( y ) < 0 ) { ClipperLib::ReversePath( y ); }
-
-  //printf(" Area(A) %f, Area(B) %f\n", ClipperLib::Area( x ), ClipperLib::Area( y ) );
-
 
   clipAmB.AddPath( x, ClipperLib::ptSubject, true );
   clipAmB.AddPath( y, ClipperLib::ptClip, true );
@@ -567,10 +588,9 @@ int clip_polygon_is_A_simply_inside_B( ClipperLib::Path &A, ClipperLib::Path &B 
                    ClipperLib::pftNonZero,
                    ClipperLib::pftNonZero  );
 
-  //printf( " AmB %i, BmA %i\n", (int)solnAmB.size(), (int)solnBmA.size() );
-
-  if ( (solnAmB.size() == 0) && (solnBmA.size() > 0) )
+  if ( (solnAmB.size() == 0) && (solnBmA.size() > 0) ) {
     return 1;
+  }
   return 0;
 
 }
@@ -595,6 +615,8 @@ void emitWeakPWH( std::vector< std::vector< iPnt > > pwh ) {
   std::vector<p2t::Point *> poly;
 
   std::vector<p2t::Point *> garbage_poly;
+
+  double x_d, y_d;
 
 
   for (i=0; i<pwh.size(); i++) {
@@ -667,15 +689,28 @@ void emitWeakPWH( std::vector< std::vector< iPnt > > pwh ) {
   ConvertPolygonWithHolesToWeakPath( opath, pwh, edge, pointInfoMap );
 
   int n = opath.size();
-  for (i=0; i<n; i++) { fprintf(gOutputFp, "%lli %lli\n", opath[i].X/gMulFactor, opath[i].Y/gMulFactor ); }
+
+  if (gFloatRead) {
+    for (i=0; i<n; i++) {
+      x_d = (double) (opath[i].X/gMulFactor);
+      y_d = (double) (opath[i].Y/gMulFactor);
+      x_d /= gPremul;
+      y_d /= gPremul;
+      fprintf(gOutputFp, "%f %f\n", x_d, y_d);
+    }
+  }
+  else {
+    for (i=0; i<n; i++) {
+      fprintf(gOutputFp, "%lli %lli\n", opath[i].X/gMulFactor, opath[i].Y/gMulFactor );
+    }
+  }
 
   delete cdt;
-  for (i=0; i<garbage_poly.size(); i++)
+  for (i=0; i<garbage_poly.size(); i++) {
     delete garbage_poly[i];
+  }
 
 }
-
-
 
 int main(int argc, char **argv) {
   int i, j, k;
@@ -684,12 +719,14 @@ int main(int argc, char **argv) {
   bool first = true;
   bool is_outer_boundary = true;
 
+
   std::vector<p2t::Point *> outer_boundary;
   std::vector< std::vector<p2t::Point *> > boundaries;
   std::vector< std::vector<p2t::Point *> > holes;
   std::vector<p2t::Point *> poly;
 
   int polyname = 0;
+  double X_d, Y_d;
 
   PointInfoMap pointInfoMap;
   EdgeMap edgeMap;
@@ -708,7 +745,10 @@ int main(int argc, char **argv) {
 
   int debug_var = 0;
 
-  char buf[1024];
+  //char buf[1024];
+  std::string buf;
+  int ch;
+  int process_input = 1;
 
   ClipperLib::Path cur_clip_path;
   ClipperLib::Paths clip_paths;
@@ -721,13 +761,81 @@ int main(int argc, char **argv) {
 
   process_command_line_options( argc, argv );
 
-  while (fgets(buf, 1024, gInputFp)) {
+  //while (fgets(buf, 1024, gInputFp)) {
+  while (process_input) {
+
+    ch=fgetc(gInputFp);
+    if (ch == EOF) {
+      buf += '\n';
+      process_input = 0;
+    }
+    else {
+      buf += ch;
+    }
+
+    if ((ch != '\n') && (ch != EOF)) { continue; }
+
+    // we've reached a line for processing
+    //
+
     line_no++;
 
-    if (buf[0] == '#') continue;
-    if (buf[0] == '\n') {
+    // if the buffer is empty or it's a comment,
+    // skip
+    //
+    if ( (buf.size()==0) ||
+         (buf[0] == '#') ) {
 
-      if (cur_clip_path.size() == 0) { continue; }
+      buf.clear();
+
+      // hacky way to handle special case if file
+      // ends with a comment and no new line
+      //
+      if (ch == EOF) {
+        buf += '\n';
+      }
+      else {
+        continue;
+      }
+    }
+
+    // an empty line (or the end-of-file)
+    // means we've finished a polygon and we should
+    // add it to the current polygon
+    //
+    if (buf[0] != '\n') {
+
+      if (gFloatRead) {
+        k = sscanf(buf.c_str(), "%lf %lf", &X_d, &Y_d);
+      }
+      else {
+        k = sscanf(buf.c_str(), "%lli %lli", &X, &Y);
+      }
+
+      if (k!=2) {
+        fprintf(stderr, "invalid read on line %i, exiting\n", line_no);
+        exit(2);
+      }
+
+      if (gFloatRead) {
+        X = (long long int)(gPremul * X_d);
+        Y = (long long int)(gPremul * Y_d);
+      }
+
+      cur_clip_path.push_back( ClipperLib::IntPoint(X*gMulFactor, Y*gMulFactor) );
+    }
+
+
+    // if we've tied of the polygon with a newline (or eof),
+    // save the polygon
+    //
+    if ( (buf[0] == '\n') ||
+         (ch == EOF) ) {
+
+      if (cur_clip_path.size() == 0) {
+        buf.clear();
+        continue;
+      }
 
       poly.clear();
       ipoly.clear();
@@ -735,16 +843,27 @@ int main(int argc, char **argv) {
       clip_paths.clear();
       clip_paths_res.clear();
 
+      printf("### %i\n", (int)cur_clip_path.size());
+
       clip_paths.push_back( cur_clip_path );
 
       ClipperLib::SimplifyPolygons( clip_paths, clip_paths_res, ClipperLib::pftNonZero );
 
-      if (clip_paths_res.size() == 0)
-      {
+      if (clip_paths_res.size() == 0) {
+
+        if (gIgnoreColinear) {
+          cur_clip_path.clear();
+
+          buf.clear();
+          continue;
+        }
+
         fprintf(stderr, "Resulting polygon invalid (colinear?).  line_no %i\n", line_no);
         exit(2);
       }
 
+      // copy over to p2t library
+      //
       for (i=0; i<clip_paths_res[0].size(); i++) {
         xy.X = clip_paths_res[0][i].X;
         xy.Y = clip_paths_res[0][i].Y;
@@ -768,13 +887,12 @@ int main(int argc, char **argv) {
 
       polyname ++;
       is_outer_boundary = false;
+
+      buf.clear();
       continue;
     }
 
-    k = sscanf(buf, "%lli %lli", &X, &Y);
-    if (k!=2) { fprintf(stderr, "invalid read on line %i, exiting\n", line_no); exit(2); }
-
-    cur_clip_path.push_back( ClipperLib::IntPoint(X*gMulFactor, Y*gMulFactor) );
+    buf.clear();
 
   }
 
@@ -782,6 +900,11 @@ int main(int argc, char **argv) {
   //
   ClipperLib::PolyTree pt;
   ClipperLib::Clipper clip;
+
+  if (clip_boundaries.size()==0) {
+    fprintf(stderr, "no polygons to process?\n");
+    exit(-1);
+  }
 
   for (i=0; i<clip_boundaries.size(); i++) {
 
