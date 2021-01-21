@@ -57,10 +57,8 @@ double gPremul = 1000000000.0;
 typedef signed long long cInt;
 typedef unsigned long long cUInt;
 
-
 int gFloatRead = 0;
 int gIgnoreColinear = 1;
-
 
 cInt dtocint( double d ) {
   if (d < 0.0) return (unsigned long long)(d-0.5);
