@@ -449,7 +449,7 @@ void process_command_line_options( int argc, char **argv ) {
   extern int optind;
   int option_index;
 
-  char ch;
+  int ch;
 
   while ((ch = getopt_long(argc, argv, "hi:o:vVF:", gLongOption, &option_index)) > 0) switch(ch) {
     case 'h':
